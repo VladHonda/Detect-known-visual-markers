@@ -1,11 +1,21 @@
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFile
 from reportlab.lib.pagesizes import landscape, A5
 from reportlab.pdfgen import canvas
 import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+
+# AVIF support: Requires pillow-avif-plugin installed
+# pip install pillow-avif-plugin
+try:
+    import pillow_avif
+    pillow_avif.register_avif_opener()
+except ImportError:
+    print("⚠️ pillow-avif-plugin not installed. AVIF files won't be supported.")
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True  # Avoid some errors with corrupted images
 
 # === CONFIG ===
 INPUT_FOLDER = Path(r"C:\Pictures")
@@ -16,7 +26,6 @@ ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMS = cv2.aruco.DetectorParameters()
 
 def is_image_file(file_path):
-    # Try to open the file with PIL to check if it is an image
     try:
         with Image.open(file_path) as img:
             img.verify()
@@ -32,7 +41,6 @@ def detect_markers(image):
     return None
 
 def order_marker_corners(marker_dict):
-    # Make sure we have markers 0,1,2,3 to form corners
     try:
         pts = np.array([
             marker_dict[0][0][0],
@@ -45,7 +53,6 @@ def order_marker_corners(marker_dict):
         return None
 
 def four_point_transform(image, pts):
-    # Calculate width and height dynamically from marker points
     def distance(a, b):
         return np.linalg.norm(a - b)
 
@@ -70,7 +77,6 @@ def four_point_transform(image, pts):
 
 def crop_with_margin(img, margin=MARGIN):
     h, w = img.shape[:2]
-    # Ensure margin is not bigger than half the image dimension
     margin = min(margin, w // 2, h // 2)
     return img[margin:h - margin, margin:w - margin]
 
@@ -96,6 +102,12 @@ def scan_document(image_path, output_path):
             return
 
         image = cv2.imread(str(image_path))
+        if image is None:
+            # Sometimes OpenCV cannot read AVIF or special formats,
+            # fallback to PIL conversion and then to OpenCV
+            with Image.open(image_path) as pil_img:
+                pil_img = pil_img.convert("RGB")
+                image = np.array(pil_img)[:, :, ::-1].copy()  # RGB to BGR
         if image is None:
             print(f"⚠️ Cannot read: {image_path.name}")
             return
